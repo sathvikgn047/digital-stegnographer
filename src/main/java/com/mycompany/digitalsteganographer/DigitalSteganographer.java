@@ -10,8 +10,10 @@ import javax.swing.border.EmptyBorder;
 import java.awt.*;
 import java.awt.image.BufferedImage;
 import java.io.File;
+import java.io.FileOutputStream;
 import java.nio.ByteBuffer;
 import java.nio.charset.StandardCharsets;
+import java.nio.file.Files;
 import java.security.NoSuchAlgorithmException;
 import java.security.SecureRandom;
 import java.security.spec.InvalidKeySpecException;
@@ -25,17 +27,21 @@ import java.util.Base64;
 
 public class DigitalSteganographer extends JFrame {
 
+    // A unique separator to distinguish the filename from the file data
+    private static final String FILENAME_SEPARATOR = "::FILENAME_SEPARATOR::";
+
     private static final String DB_URL = "jdbc:mysql://localhost:3306/steganography_db";
     private static final String DB_USER = "your_db_user";
     private static final String DB_PASSWORD = "your_db_password";
 
-    private JTextArea messageTextArea;
     private JPasswordField passwordField;
     private JLabel imagePathLabel;
+    private JLabel documentPathLabel;
     private File selectedImageFile;
+    private File selectedDocumentFile;
 
     public DigitalSteganographer() {
-        setTitle("Digital Steganographer");
+        setTitle("Digital Steganographer - File Hider");
         setDefaultCloseOperation(JFrame.EXIT_ON_CLOSE);
         setSize(600, 400);
         setLocationRelativeTo(null);
@@ -50,23 +56,29 @@ public class DigitalSteganographer extends JFrame {
         gbc.fill = GridBagConstraints.HORIZONTAL;
         gbc.insets = new Insets(5, 5, 5, 5);
 
+        // Row 0: Select Document
         gbc.gridx = 0;
         gbc.gridy = 0;
-        formPanel.add(new JLabel("Secret Message:"), gbc);
+        JButton selectDocumentButton = new JButton("Select Document to Hide");
+        formPanel.add(selectDocumentButton, gbc);
 
         gbc.gridx = 1;
         gbc.gridy = 0;
-        gbc.gridheight = 2;
-        gbc.weightx = 1.0;
-        gbc.weighty = 1.0;
-        messageTextArea = new JTextArea(5, 20);
-        messageTextArea.setLineWrap(true);
-        messageTextArea.setWrapStyleWord(true);
-        formPanel.add(new JScrollPane(messageTextArea), gbc);
-        gbc.gridheight = 1;
-        gbc.weighty = 0;
+        documentPathLabel = new JLabel("No document selected.");
+        formPanel.add(documentPathLabel, gbc);
+        
+        // Row 1: Select Image
+        gbc.gridx = 0;
+        gbc.gridy = 1;
+        JButton selectImageButton = new JButton("Select Cover Image");
+        formPanel.add(selectImageButton, gbc);
 
+        gbc.gridx = 1;
+        gbc.gridy = 1;
+        imagePathLabel = new JLabel("No image selected.");
+        formPanel.add(imagePathLabel, gbc);
 
+        // Row 2: Password
         gbc.gridx = 0;
         gbc.gridy = 2;
         formPanel.add(new JLabel("Password:"), gbc);
@@ -76,19 +88,9 @@ public class DigitalSteganographer extends JFrame {
         passwordField = new JPasswordField();
         formPanel.add(passwordField, gbc);
 
-        gbc.gridx = 0;
-        gbc.gridy = 3;
-        JButton selectImageButton = new JButton("Select Image");
-        formPanel.add(selectImageButton, gbc);
-
-        gbc.gridx = 1;
-        gbc.gridy = 3;
-        imagePathLabel = new JLabel("No image selected.");
-        formPanel.add(imagePathLabel, gbc);
-
         JPanel buttonPanel = new JPanel(new FlowLayout(FlowLayout.CENTER, 10, 0));
-        JButton encodeButton = new JButton("Encode");
-        JButton decodeButton = new JButton("Decode");
+        JButton encodeButton = new JButton("Encode Document");
+        JButton decodeButton = new JButton("Decode Document");
         buttonPanel.add(encodeButton);
         buttonPanel.add(decodeButton);
 
@@ -97,11 +99,22 @@ public class DigitalSteganographer extends JFrame {
 
         add(mainPanel);
 
+        selectDocumentButton.addActionListener(e -> selectDocument());
         selectImageButton.addActionListener(e -> selectImage());
         encodeButton.addActionListener(e -> process(true));
         decodeButton.addActionListener(e -> process(false));
 
         DatabaseManager.init();
+    }
+    
+    private void selectDocument() {
+        JFileChooser fileChooser = new JFileChooser();
+        fileChooser.setDialogTitle("Select a Document to Hide");
+        int result = fileChooser.showOpenDialog(this);
+        if (result == JFileChooser.APPROVE_OPTION) {
+            selectedDocumentFile = fileChooser.getSelectedFile();
+            documentPathLabel.setText(selectedDocumentFile.getName());
+        }
     }
 
     private void selectImage() {
@@ -116,7 +129,7 @@ public class DigitalSteganographer extends JFrame {
 
     private void process(boolean isEncode) {
         if (selectedImageFile == null) {
-            JOptionPane.showMessageDialog(this, "Please select an image first.", "Error", JOptionPane.ERROR_MESSAGE);
+            JOptionPane.showMessageDialog(this, "Please select a cover image first.", "Error", JOptionPane.ERROR_MESSAGE);
             return;
         }
         String password = new String(passwordField.getPassword());
@@ -126,22 +139,29 @@ public class DigitalSteganographer extends JFrame {
         }
 
         if (isEncode) {
-            String message = messageTextArea.getText();
-            if (message.isEmpty()) {
-                JOptionPane.showMessageDialog(this, "Message cannot be empty.", "Error", JOptionPane.ERROR_MESSAGE);
+            if (selectedDocumentFile == null) {
+                JOptionPane.showMessageDialog(this, "Please select a document to hide.", "Error", JOptionPane.ERROR_MESSAGE);
                 return;
             }
-            encodeImage(message, password);
+            encodeImage(password);
         } else {
             decodeImage(password);
         }
     }
 
-    private void encodeImage(String message, String password) {
+    private void encodeImage(String password) {
         try {
+            // Read the document file into a byte array
+            byte[] documentBytes = Files.readAllBytes(selectedDocumentFile.toPath());
+            // Convert the byte array to a Base64 string
+            String documentBase64 = Base64.getEncoder().encodeToString(documentBytes);
+
+            // Create the payload with filename and data
+            String payload = selectedDocumentFile.getName() + FILENAME_SEPARATOR + documentBase64;
+
             BufferedImage originalImage = ImageIO.read(selectedImageFile);
-            String encryptedMessage = CryptoCore.encrypt(message, password);
-            BufferedImage stegoImage = StegoCore.embed(originalImage, encryptedMessage);
+            String encryptedPayload = CryptoCore.encrypt(payload, password);
+            BufferedImage stegoImage = StegoCore.embed(originalImage, encryptedPayload);
 
             JFileChooser fileChooser = new JFileChooser();
             fileChooser.setDialogTitle("Save Stego Image");
@@ -151,29 +171,55 @@ public class DigitalSteganographer extends JFrame {
             if (userSelection == JFileChooser.APPROVE_OPTION) {
                 File fileToSave = fileChooser.getSelectedFile();
                 ImageIO.write(stegoImage, "png", fileToSave);
-                JOptionPane.showMessageDialog(this, "Message hidden successfully!", "Success", JOptionPane.INFORMATION_MESSAGE);
-                DatabaseManager.logOperation("ENCODE", selectedImageFile.getAbsolutePath(), fileToSave.getAbsolutePath(), message.length());
-                messageTextArea.setText("");
+                JOptionPane.showMessageDialog(this, "Document hidden successfully!", "Success", JOptionPane.INFORMATION_MESSAGE);
+                DatabaseManager.logOperation("ENCODE", selectedImageFile.getAbsolutePath(), fileToSave.getAbsolutePath(), (int)selectedDocumentFile.length());
                 passwordField.setText("");
             }
         } catch (Exception ex) {
             JOptionPane.showMessageDialog(this, "Encoding failed: " + ex.getMessage(), "Error", JOptionPane.ERROR_MESSAGE);
+            ex.printStackTrace();
         }
     }
 
     private void decodeImage(String password) {
         try {
             BufferedImage stegoImage = ImageIO.read(selectedImageFile);
-            String encryptedMessage = StegoCore.extract(stegoImage);
-            String decryptedMessage = CryptoCore.decrypt(encryptedMessage, password);
-            messageTextArea.setText(decryptedMessage);
-            JOptionPane.showMessageDialog(this, "Message extracted successfully!", "Success", JOptionPane.INFORMATION_MESSAGE);
-            DatabaseManager.logOperation("DECODE", selectedImageFile.getAbsolutePath(), null, decryptedMessage.length());
+            String encryptedPayload = StegoCore.extract(stegoImage);
+            String decryptedPayload = CryptoCore.decrypt(encryptedPayload, password);
+
+            // Split the payload to get the filename and the Base64 data
+            String[] parts = decryptedPayload.split(FILENAME_SEPARATOR, 2);
+            if (parts.length != 2) {
+                throw new IllegalStateException("Invalid data format. Filename separator not found.");
+            }
+            String originalFilename = parts[0];
+            String documentBase64 = parts[1];
+
+            // Decode the Base64 string back to the original file bytes
+            byte[] documentBytes = Base64.getDecoder().decode(documentBase64);
+
+            // Ask the user where to save the extracted file
+            JFileChooser fileChooser = new JFileChooser();
+            fileChooser.setDialogTitle("Save Extracted Document");
+            fileChooser.setSelectedFile(new File(originalFilename));
+            int userSelection = fileChooser.showSaveDialog(this);
+
+            if (userSelection == JFileChooser.APPROVE_OPTION) {
+                File fileToSave = fileChooser.getSelectedFile();
+                try (FileOutputStream fos = new FileOutputStream(fileToSave)) {
+                    fos.write(documentBytes);
+                }
+                JOptionPane.showMessageDialog(this, "Document extracted successfully!", "Success", JOptionPane.INFORMATION_MESSAGE);
+                DatabaseManager.logOperation("DECODE", selectedImageFile.getAbsolutePath(), fileToSave.getAbsolutePath(), documentBytes.length);
+            }
         } catch (Exception ex) {
             JOptionPane.showMessageDialog(this, "Decoding failed. Check password or image integrity.", "Error", JOptionPane.ERROR_MESSAGE);
-            ex.printStackTrace(); // Helpful for debugging
+            ex.printStackTrace();
         }
     }
+
+    // --- StegoCore, CryptoCore, and DatabaseManager classes remain unchanged ---
+    // (They are included here for completeness)
 
     private static class StegoCore {
         private static final int STEGO_MARKER = 0x5A5A5A5A;
@@ -297,7 +343,7 @@ public class DigitalSteganographer extends JFrame {
             int startPixelIndex = (8 * 2) / 3;
             int channelsToSkip = (8 * 2) % 3;
 
-            for (int i = startPixelIndex; i < image.getWidth() * image.getHeight() && byteIndex < dataLength; i++) {
+            for (int i = startPixelIndex; i < (long) image.getWidth() * image.getHeight() && byteIndex < dataLength; i++) {
                 int x = i % image.getWidth();
                 int y = i / image.getWidth();
                 int pixel = image.getRGB(x, y);
@@ -306,28 +352,26 @@ public class DigitalSteganographer extends JFrame {
                 int green = (pixel >> 8) & 0xFF;
                 int blue = pixel & 0xFF;
 
-                if (i == startPixelIndex) {
-                    if(channelsToSkip == 1) { // R is used, G is first
-                        currentByte = assembleByte(currentByte, green, nibbleIndex++);
-                        if(nibbleIndex > 1) { dataBytes[byteIndex++] = currentByte; currentByte = 0; nibbleIndex = 0; }
-                    }
-                    if(byteIndex < dataLength) {
-                        currentByte = assembleByte(currentByte, blue, nibbleIndex++);
-                        if(nibbleIndex > 1) { dataBytes[byteIndex++] = currentByte; currentByte = 0; nibbleIndex = 0; }
-                    }
-                } else {
-                     if (byteIndex < dataLength) {
+                // Process Red channel, but skip it for the start pixel if the header used it
+                if (!(i == startPixelIndex && channelsToSkip >= 1)) {
+                    if (byteIndex < dataLength) {
                         currentByte = assembleByte(currentByte, red, nibbleIndex++);
                         if (nibbleIndex > 1) { dataBytes[byteIndex++] = currentByte; currentByte = 0; nibbleIndex = 0; }
                     }
-                     if (byteIndex < dataLength) {
+                }
+                
+                // Process Green channel, but skip it for the start pixel if the header used it
+                if (!(i == startPixelIndex && channelsToSkip >= 2)) {
+                    if (byteIndex < dataLength) {
                         currentByte = assembleByte(currentByte, green, nibbleIndex++);
                         if (nibbleIndex > 1) { dataBytes[byteIndex++] = currentByte; currentByte = 0; nibbleIndex = 0; }
                     }
-                     if (byteIndex < dataLength) {
-                        currentByte = assembleByte(currentByte, blue, nibbleIndex++);
-                        if (nibbleIndex > 1) { dataBytes[byteIndex++] = currentByte; currentByte = 0; nibbleIndex = 0; }
-                    }
+                }
+                
+                // Process Blue channel (always processed)
+                if (byteIndex < dataLength) {
+                    currentByte = assembleByte(currentByte, blue, nibbleIndex++);
+                    if (nibbleIndex > 1) { dataBytes[byteIndex++] = currentByte; currentByte = 0; nibbleIndex = 0; }
                 }
             }
             return new String(dataBytes, StandardCharsets.UTF_8);
